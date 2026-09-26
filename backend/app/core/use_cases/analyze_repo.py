@@ -1,43 +1,39 @@
 from app.infrastructure.git.github_client import GithubClient, GithubClientError
+from app.infrastructure.llm.watsonx_client import WatsonXClient, WatsonXClientError, WatsonXTimeoutError
 
 async def execute_repo_analysis(repo_url: str) -> dict:
     """
     Orchestrates the analysis:
-    1. Fetches repo data via GithubClient
-    2. (Placeholder) Sends data to Watsonx LLM
-    3. Formats response
+    1. Fetches REAL repo data via GithubClient
+    2. Sends data to WatsonxClient (currently using internal mock)
+    3. Formats the final response
     """
-    client = GithubClient()
     try:
-        # Step 1: Fetch raw data from GitHub
-        repo_data = await client.fetch_repo_summary(repo_url)
+        # Step 1: Fetch real GitHub data
+        async with GithubClient() as git_client:
+            repo_data = await git_client.fetch_repo_summary(repo_url)
         
-        # Step 2: Simulate LLM Analysis based on real GitHub data
-        # (We will replace this mock with real Watsonx call later tonight)
         files_found = [item['path'] for item in repo_data.get('tree', []) if item['type'] == 'blob']
-        file_count = len(files_found)
+        repo_name = repo_data.get("metadata", {}).get("full_name", "unknown/repo")
         
-        # We craft a dynamic response based on the REAL repo fetched
+        # Step 2: Send to Watsonx Client
+        # We initialize with fake keys because Bob's mock block bypasses the actual network call
+        async with WatsonXClient(api_key="mock_key", project_id="mock_id") as llm_client:
+            llm_result = await llm_client.analyze_codebase(
+                repo_name=repo_name,
+                file_list=files_found
+            )
+            
+        # Step 3: Combine and return
         return {
             "status": "success",
             "repo_url": repo_data.get("metadata", {}).get("html_url", repo_url),
-            "architecture_summary": (
-                f"Analysis of '{repo_data['metadata'].get('full_name')}': "
-                f"Found {file_count} files in the root tree. "
-                "The repository follows standard conventions. (LLM deep-dive pending)."
-            ),
-            "state_leaks": [
-                {
-                    "severity": "medium",
-                    "file": files_found[0] if files_found else "unknown",
-                    "description": "Potential unencrypted state based on shallow scan."
-                }
-            ]
+            "architecture_summary": llm_result.get("architecture_summary", "Analysis unavailable."),
+            "state_leaks": llm_result.get("state_leaks", [])
         }
-    except GithubClientError as e:
+        
+    except (GithubClientError, WatsonXClientError, WatsonXTimeoutError) as e:
         return {
             "status": "error",
             "message": str(e)
         }
-    finally:
-        await client.close()
